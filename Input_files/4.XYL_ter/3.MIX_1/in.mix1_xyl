@@ -1,0 +1,95 @@
+# This is the trial script for LAMMPS
+
+echo                    both
+#-------------------------------------------------------------------------------
+# Stage 1.1: Initialize LAMMPS run for 3-d periodic
+#-------------------------------------------------------------------------------
+
+units                   real
+boundary                p p p
+atom_style              full
+
+# interaction styles
+pair_style              lj/cut/coul/long 12.0 12.0
+bond_style	        harmonic
+angle_style 		harmonic
+dihedral_style          fourier
+improper_style          cvff
+pair_modify             mix arithmetic tail yes
+kspace_style            pppm 1.0e-4    #This is just a trial number.
+special_bonds           amber
+
+# read in the  data
+read_data               mix1_xyl.data
+
+# Definding variables to use in future
+variable    R         equal 0.00198722
+variable    sysvol    equal vol
+variable    sysmass   equal mass(all)/6.0221367e+23
+variable    sysdensity  equal v_sysmass/v_sysvol/1.0e-24
+shell 'rm -f rngs.txt; echo $RANDOM >>rngs.txt'
+variable seed file rngs.txt
+
+# All the groups that specified to be used in chunk/atom. Or to freeze etc.
+group       freeze  type 13 15
+group       movable subtract all freeze
+group       surface molecule 1
+
+neighbor                2.0 bin
+neigh_modify            delay 0 every 1 check yes
+write_coeff             mix1_xyl.coeff
+#-------------------------------------------------------------------------------¬
+# Stage 1.1: Minimization
+#-------------------------------------------------------------------------------¬
+fix                     0 freeze setforce 0.0 0.0 0.0
+min_style               cg
+min_modify              dmax 0.05   #effect the convergence. user can play with the parameters.
+reset_timestep          0
+thermo                  100
+thermo_style            custom step temp press vol v_sysdensity etotal ke pe
+dump                    sci all xyz 100 em.xyz
+minimize                1.0e-10 1.0e-10 10000 100000
+
+undump                  sci
+write_restart           restart.em
+
+# set the velocity to get temperature scalled to 300K. Need to be differering the random number everytime you run new simulations.
+velocity movable create 300.0 ${seed} dist gaussian
+run 0                             # temperature may not be 300K
+velocity movable scale 300.0          # now it should be
+#-------------------------------------------------------------------------------
+# Stage 1.2:  NVT equilibration
+#             Temperature 300k
+#-------------------------------------------------------------------------------
+timestep                1
+reset_timestep          0
+fix                     1 all nvt temp 300 300 100
+variable                f file python.txt
+variable                s equal next(f)
+dump                    dump1 all custom 1000 2nvt_eq.lammpstrj id mol type q x y z ix iy iz vx vy vz
+dump_modify             dump1 sort id
+dump_modify             dump1 every v_s
+dump_modify             dump1 append yes
+
+run                     10485761
+undump                  dump1
+unfix   1
+variable                f delete 
+variable                s delete
+write_dump              all xyz equibration.xyz
+write_restart           restart.nvtEqui
+#-------------------------------------------------------------------------------
+# Stage 1.2:  NVT Production run
+#             Temperature 300k
+#-------------------------------------------------------------------------------
+reset_timestep          0
+fix                     1 all nvt temp 300 300 100
+dump                    dump2 all custom 1000 3nvt_production.lammpstrj id mol type q x y z ix iy iz vx vy vz
+dump_modify             dump2 sort id
+restart                 500000 production.restart
+
+run                     20000001
+undump                  dump2
+unfix   1
+write_dump              all xyz final.xyz
+
